@@ -5,7 +5,8 @@ class AgentState(TypedDict):
     Description: Represents the shared state object passed across all LangGraph nodes.
     Usecase: Tracks natural language query, synthesized SQL, execution errors, retry counts, and final result.
     """
-    question: str                   
+    question: str  
+    db_config: Optional[Dict[str, Any]]                 
     schema: str                     
     sql_query: str                  
     is_valid_sql: bool              

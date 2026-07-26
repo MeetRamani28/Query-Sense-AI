@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useRef } from "react";
 import {
   BarChart,
   Bar,
@@ -14,6 +14,9 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
+import { Download, FileText } from "lucide-react";
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
 
 interface DynamicChartProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -36,6 +39,8 @@ export const DynamicChart: React.FC<DynamicChartProps> = ({
   chartType,
   explanation,
 }) => {
+  const chartRef = useRef<HTMLDivElement>(null);
+
   if (!data || data.length === 0) {
     return (
       <div className="p-8 text-center text-slate-400 bg-slate-900/50 rounded-xl border border-slate-800">
@@ -48,13 +53,66 @@ export const DynamicChart: React.FC<DynamicChartProps> = ({
   const xAxisKey = keys[0];
   const valueKeys = keys.slice(1);
 
+  const exportToCSV = () => {
+    const headers = keys.join(",");
+    const rows = data.map((row) =>
+      keys.map((k) => `"${String(row[k]).replace(/"/g, '""')}"`).join(","),
+    );
+    const csvContent =
+      "data:text/csv;charset=utf-8," + [headers, ...rows].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `query_results_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const exportToPDF = async () => {
+    if (!chartRef.current) return;
+    const canvas = await html2canvas(chartRef.current, {
+      backgroundColor: "#0f172a",
+    });
+    const imgData = canvas.toDataURL("image/png");
+    const pdf = new jsPDF("landscape", "mm", "a4");
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+    pdf.addImage(imgData, "PNG", 0, 10, pdfWidth, pdfHeight);
+    pdf.save(`query_report_${Date.now()}.pdf`);
+  };
+
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl space-y-4">
-      {explanation && (
-        <div className="p-3 bg-slate-800/60 rounded-lg text-sm text-sky-300 border border-sky-500/20">
-          💡 <span className="font-semibold">Insight:</span> {explanation}
+    <div
+      ref={chartRef}
+      className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl space-y-4"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {explanation ? (
+          <div className="p-2.5 bg-slate-800/60 rounded-lg text-xs text-sky-300 border border-sky-500/20 flex-1">
+            💡 <span className="font-semibold">Insight:</span> {explanation}
+          </div>
+        ) : (
+          <div />
+        )}
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={exportToCSV}
+            className="flex items-center gap-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg border border-slate-700 cursor-pointer transition-colors"
+          >
+            <Download className="w-3.5 h-3.5 text-sky-400" />
+            <span>CSV</span>
+          </button>
+          <button
+            onClick={exportToPDF}
+            className="flex items-center gap-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg border border-slate-700 cursor-pointer transition-colors"
+          >
+            <FileText className="w-3.5 h-3.5 text-emerald-400" />
+            <span>PDF</span>
+          </button>
         </div>
-      )}
+      </div>
 
       <div className="h-80 w-full">
         {chartType === "bar" && (
@@ -142,7 +200,7 @@ export const DynamicChart: React.FC<DynamicChartProps> = ({
         )}
 
         {(chartType === "table" || chartType === "none") && (
-          <div className="overflow-x-auto max-h-72">
+          <div className="overflow-x-auto max-h-72 no-scrollbar">
             <table className="w-full text-sm text-left text-slate-300 border-collapse">
               <thead className="text-xs uppercase bg-slate-800 text-slate-400 sticky top-0">
                 <tr>

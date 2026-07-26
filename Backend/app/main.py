@@ -20,8 +20,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class DbConfigSchema(BaseModel):
+    host: str = "localhost"
+    port: int = 5432
+    dbname: str
+    user: str
+    password: str
+
 class QueryRequest(BaseModel):
     question: str = Field(..., example="Show me total revenue by region")
+    db_config: Optional[DbConfigSchema] = None
 
 class QueryResponse(BaseModel):
     question: str
@@ -47,14 +55,19 @@ def health_check():
 async def process_analytics_query(request: QueryRequest):
     """
     Description: Main Natural Language to SQL Analytics Endpoint.
-    Usecase: Accepts user question, executes LangGraph self-correction workflow, and returns query results + chart mapping.
+    Usecase: Accepts user question + optional DB config, executes LangGraph workflow, and returns query results.
     """
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
     try:
+        db_config_dict = None
+        if request.db_config:
+            db_config_dict = request.db_config.model_dump() if hasattr(request.db_config, 'model_dump') else request.db_config.dict()
+
         initial_state = {
             "question": request.question,
+            "db_config": db_config_dict,
             "retry_count": 0,
             "max_retries": 3
         }

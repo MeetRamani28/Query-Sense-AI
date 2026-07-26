@@ -15,19 +15,24 @@ llm = ChatGroq(
 
 def generate_sql_node(state: AgentState) -> dict:
     """
-    Description: Synthesizes a PostgreSQL SELECT query based on user question and DB schema.
-    Usecase: Initial step to convert text into SQL using Groq Llama-3.
+    Description: Synthesizes a PostgreSQL SELECT query based on user question and DB schema,
+                 plus a 1-sentence breakdown explaining the SQL logic.
+    Usecase: Initial step to convert text into structured JSON containing SQL + Explanation.
     """
-    schema = get_database_schema()
+    db_config = state.get("db_config")
+    schema = get_database_schema(db_config)
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", """You are an expert PostgreSQL Data Engineer. 
-Your task is to convert natural language business questions into valid PostgreSQL SELECT queries.
+Your task is to convert natural language business questions into valid PostgreSQL SELECT queries AND provide a brief 1-sentence breakdown explaining which tables/conditions you used.
 
 CRITICAL RULES:
-1. Return ONLY the raw executable SQL query.
-2. DO NOT include markdown formatting like ```sql or explanations.
-3. Use ONLY SELECT statements. No DELETE, DROP, UPDATE, INSERT, or ALTER.
+1. Output MUST be a valid JSON object with keys: "sql_query" and "sql_explanation".
+2. DO NOT include markdown formatting like ```json or explanations outside the JSON structure.
+3. STRICT SECURITY & SCHEMA RULES: 
+   - You MUST ONLY generate read-only SELECT queries using tables and columns present in the schema below.
+   - If the user asks to modify, update, insert, delete, drop, or truncate data, set "sql_query" to "FORBIDDEN_SECURITY_ERROR" and "sql_explanation" to "Destructive database operations are strictly forbidden."
+   - If the user asks about tables or columns that DO NOT exist in the provided schema, set "sql_query" to "FORBIDDEN_SCHEMA_ERROR" and "sql_explanation" to "The requested tables or columns do not exist in the connected database schema."
 4. Use valid PostgreSQL table and column names as specified in the schema below.
 
 DATABASE SCHEMA:
@@ -36,20 +41,55 @@ DATABASE SCHEMA:
     ])
 
     chain = prompt | llm
-    response = chain.invoke({"schema": schema, "question": state["question"]})
-    
-    return {
-        "schema": schema,
-        "sql_query": response.content.strip(),
-        "retry_count": 0
-    }
+    try:
+        response = chain.invoke({"schema": schema, "question": state["question"]})
+        clean_res = response.content.strip()
+        
+        if clean_res.startswith("```"):
+            clean_res = clean_res.split("```")[1]
+            if clean_res.lower().startswith("json"):
+                clean_res = clean_res[4:].strip()
+        if clean_res.endswith("```"):
+            clean_res = clean_res[:-3].strip()
+
+        parsed = json.loads(clean_res)
+        return {
+            "schema": schema,
+            "sql_query": parsed.get("sql_query", "").strip(),
+            "explanation": parsed.get("sql_explanation", "Executed PostgreSQL SELECT query."),
+            "retry_count": 0
+        }
+    except Exception:
+        raw_output = response.content.strip()
+        return {
+            "schema": schema,
+            "sql_query": raw_output,
+            "explanation": "Synthesized PostgreSQL SELECT query.",
+            "retry_count": 0
+        }
 
 def validate_sql_node(state: AgentState) -> dict:
     """
-    Description: Validates generated SQL using the AST parser to block non-SELECT queries.
+    Description: Validates generated SQL using the AST parser to block non-SELECT queries 
+                 and intercepts schema or security error flags.
     Usecase: Enforces Database Read-Only Guardrails before hitting the DB engine.
     """
-    is_valid, result = validate_read_only_sql(state["sql_query"])
+    sql = state.get("sql_query", "").strip()
+    explanation = state.get("explanation", "")
+
+    if sql.startswith("FORBIDDEN_SCHEMA_ERROR"):
+        return {
+            "is_valid_sql": False,
+            "error_trace": f"SCHEMA ERROR: {explanation if explanation else 'Requested tables or columns do not exist in this database.'}"
+        }
+
+    if sql.startswith("FORBIDDEN_SECURITY_ERROR") or sql.startswith("FORBIDDEN_OPERATION"):
+        return {
+            "is_valid_sql": False,
+            "error_trace": f"SECURITY ERROR: {explanation if explanation else 'Destructive operations are strictly forbidden.'}"
+        }
+
+    is_valid, result = validate_read_only_sql(sql)
     
     if is_valid:
         return {
@@ -65,11 +105,12 @@ def validate_sql_node(state: AgentState) -> dict:
 
 def execute_sql_node(state: AgentState) -> dict:
     """
-    Description: Executes validated SQL query against PostgreSQL database.
+    Description: Executes validated SQL query against PostgreSQL database (local or dynamic tenant DB).
     Usecase: Retrieves data rows or catches PostgreSQL runtime database errors.
     """
     try:
-        conn = get_db_connection()
+        db_config = state.get("db_config")
+        conn = get_db_connection(db_config)
         cursor = conn.cursor()
         cursor.execute(state["sql_query"])
         rows = cursor.fetchall()
@@ -103,6 +144,7 @@ CRITICAL RULES:
 1. Return ONLY the raw executable SQL query.
 2. DO NOT include markdown syntax like ```sql or explanations.
 3. Ensure table/column names match the schema exactly.
+4. STRICT SECURITY RULE: You MUST ONLY generate read-only SELECT queries. If the query cannot be fixed without modifying data, start with 'FORBIDDEN_SECURITY_ERROR'.
 
 DATABASE SCHEMA:
 {schema}"""),

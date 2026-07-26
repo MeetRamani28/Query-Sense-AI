@@ -1,5 +1,14 @@
+export interface DbConfig {
+  host: string;
+  port: number;
+  dbname: string;
+  user: string;
+  password: string;
+}
+
 export interface QueryRequestPayload {
   question: string;
+  db_config?: DbConfig | null;
 }
 
 export interface QueryResponseData {

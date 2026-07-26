@@ -1,12 +1,11 @@
 from app.db.session import get_db_connection
 
-def get_database_schema() -> str:
+def get_database_schema(db_config: dict = None) -> str:
     """
-    Description: Introspects the PostgreSQL database to retrieve tables, columns, data types, and foreign key relations.
-    Usecase: Provides dynamic schema context to the LLM prompt so it generates syntactically accurate SQL queries.
-    Returns: Formatted string containing schema metadata.
+    Description: Introspects any user-provided PostgreSQL database.
+    Usecase: Dynamic schema extraction for custom tenant databases.
     """
-    conn = get_db_connection()
+    conn = get_db_connection(db_config)
     cursor = conn.cursor()
 
     columns_query = """
